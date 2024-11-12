@@ -278,22 +278,23 @@ func updateGhosts(ghosts []*ghost, ghostStatus GhostStatus) {
 	}
 }
 
-var pillTimer *time.Timer
-var pillMx sync.Mutex
+var pillPNumMx sync.Mutex
+var pillPNum = 0 // the number of processPill goroutines
 
 func processPill() {
-	pillMx.Lock()
-	updateGhosts(ghosts, GhostStatusBlue)
-	if pillTimer != nil {
-		pillTimer.Stop()
+	pillPNumMx.Lock()
+	pillPNum++
+	if pillPNum == 1 {
+		updateGhosts(ghosts, GhostStatusBlue)
 	}
-	pillTimer = time.NewTimer(time.Second * time.Duration(cfg.PillDurationSecs))
-	pillMx.Unlock()
-	<-pillTimer.C
-	pillMx.Lock()
-	pillTimer.Stop()
-	updateGhosts(ghosts, GhostStatusNormal)
-	pillMx.Unlock()
+	pillPNumMx.Unlock()
+	time.Sleep(time.Second * time.Duration(cfg.PillDurationSecs))
+	pillPNumMx.Lock()
+	pillPNum--
+	if pillPNum == 0 {
+		updateGhosts(ghosts, GhostStatusNormal)
+	}
+	pillPNumMx.Unlock()
 }
 
 func initialise() {
