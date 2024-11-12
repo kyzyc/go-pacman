@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 )
 
@@ -19,7 +21,8 @@ var (
 )
 
 type sprite struct {
-	row, col int
+	row, col           int
+	startRow, startCol int
 }
 
 // Config holds the emoji configuration
@@ -40,7 +43,7 @@ var ghosts []*sprite
 
 var score int
 var numDots int
-var lives = 1
+var lives = 3
 
 var cfg Config
 
@@ -79,9 +82,9 @@ func loadMaze(file string) error {
 		for col, char := range line {
 			switch char {
 			case 'P':
-				player = sprite{row, col}
+				player = sprite{row, col, row, col}
 			case 'G':
-				ghosts = append(ghosts, &sprite{row, col})
+				ghosts = append(ghosts, &sprite{row, col, row, col})
 			case '.':
 				numDots++
 			}
@@ -125,7 +128,20 @@ func printScreen() {
 
 	// move cursor outside of maze drawing area
 	moveCursor(len(maze)+1, 0)
-	fmt.Println("Score:", score, "\tLives:", lives)
+
+	livesRemaining := strconv.Itoa(lives)
+	if cfg.UseEmoji {
+		livesRemaining = getLivesAsEmoji()
+	}
+	fmt.Println("Score:", score, "\tLives:", livesRemaining)
+}
+
+func getLivesAsEmoji() string {
+	buf := bytes.Buffer{}
+	for i := lives; i > 0; i-- {
+		buf.WriteString(cfg.Player)
+	}
+	return buf.String()
 }
 
 func readInput() (string, error) {
@@ -301,8 +317,15 @@ func main() {
 
 		// process collisions
 		for _, g := range ghosts {
-			if player == *g {
-				lives = 0
+			if player.row == g.row && player.col == g.col {
+				lives = lives - 1
+				if lives != 0 {
+					moveCursor(player.row, player.col)
+					fmt.Print(cfg.Death)
+					moveCursor(len(maze)+2, 0)
+					time.Sleep(1000 * time.Millisecond)
+					player.row, player.col = player.startRow, player.startCol
+				}
 			}
 		}
 
