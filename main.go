@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/exec"
+	"time"
 )
 
 type sprite struct {
@@ -134,7 +135,7 @@ func makeMove(oldRow, oldCol int, dir string) (newRow, newCol int) {
 		}
 	case "LEFT":
 		newCol = newCol - 1
-		if newCol == 0 {
+		if newCol < 0 {
 			newCol = len(maze[0]) - 1
 		}
 	}
@@ -207,20 +208,35 @@ func main() {
 		return
 	}
 
+	// process input (async)
+	input := make(chan string)
+	go func(ch chan<- string) {
+		for {
+			input, err := readInput()
+			if err != nil {
+				log.Println("error reading input:", err)
+				ch <- "ESC"
+				return
+			}
+			ch <- input
+		}
+	}(input)
+
 	// game loop
 	for {
 		// update screen
 		printScreen()
 
-		// process input
-		input, err := readInput()
-		if err != nil {
-			log.Print("error reading input:", err)
-			break
-		}
-
 		// process movement
-		movePlayer(input)
+		//movePlayer(input)
+		select {
+		case inp := <-input:
+			if inp == "ESC" {
+				lives = 0
+			}
+			movePlayer(inp)
+		default:
+		}
 		moveGhosts()
 
 		// process collisions
@@ -231,10 +247,11 @@ func main() {
 		}
 
 		// check game over
-		if input == "ESC" || numDots == 0 || lives <= 0 {
+		if numDots == 0 || lives <= 0 {
 			break
 		}
 
 		// repeat
+		time.Sleep(200 * time.Millisecond)
 	}
 }
