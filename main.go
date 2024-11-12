@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -27,19 +28,33 @@ type sprite struct {
 
 // Config holds the emoji configuration
 type Config struct {
-	Player   string `json:"player"`
-	Ghost    string `json:"ghost"`
-	Wall     string `json:"wall"`
-	Dot      string `json:"dot"`
-	Pill     string `json:"pill"`
-	Death    string `json:"death"`
-	Space    string `json:"space"`
-	UseEmoji bool   `json:"use_emoji"`
+	Player           string `json:"player"`
+	Ghost            string `json:"ghost"`
+	Wall             string `json:"wall"`
+	Dot              string `json:"dot"`
+	Pill             string `json:"pill"`
+	Death            string `json:"death"`
+	Space            string `json:"space"`
+	UseEmoji         bool   `json:"use_emoji"`
+	GhostBlue        string `json:"ghost_blue"`
+	PillDurationSecs int    `json:"pill_duration_secs"`
+}
+
+type GhostStatus string
+
+const (
+	GhostStatusNormal GhostStatus = "Normal"
+	GhostStatusBlue   GhostStatus = "Blue"
+)
+
+type ghost struct {
+	position sprite
+	status   GhostStatus
 }
 
 var maze []string
 var player sprite
-var ghosts []*sprite
+var ghosts []*ghost
 
 var score int
 var numDots int
@@ -84,7 +99,7 @@ func loadMaze(file string) error {
 			case 'P':
 				player = sprite{row, col, row, col}
 			case 'G':
-				ghosts = append(ghosts, &sprite{row, col, row, col})
+				ghosts = append(ghosts, &ghost{sprite{row, col, row, col}, GhostStatusNormal})
 			case '.':
 				numDots++
 			}
@@ -111,6 +126,8 @@ func printScreen() {
 				fmt.Print(simpleansi.WithBlueBackground(cfg.Wall))
 			case '.':
 				fmt.Print(cfg.Dot)
+			case 'X':
+				fmt.Print(cfg.Pill)
 			default:
 				fmt.Print(cfg.Space)
 			}
@@ -118,10 +135,16 @@ func printScreen() {
 		fmt.Println()
 	}
 
+	ghostsStatusMx.RLock()
 	for _, g := range ghosts {
-		moveCursor(g.row, g.col)
-		fmt.Print(cfg.Ghost)
+		moveCursor(g.position.row, g.position.col)
+		if g.status == GhostStatusNormal {
+			fmt.Print(cfg.Ghost)
+		} else if g.status == GhostStatusBlue {
+			fmt.Print(cfg.GhostBlue)
+		}
 	}
+	ghostsStatusMx.RUnlock()
 
 	moveCursor(player.row, player.col)
 	fmt.Print(cfg.Player)
@@ -223,6 +246,7 @@ func movePlayer(dir string) {
 	case 'X':
 		score += 10
 		removeDot(player.row, player.col)
+		go processPill()
 	}
 }
 
@@ -240,8 +264,36 @@ func drawDirection() string {
 func moveGhosts() {
 	for _, g := range ghosts {
 		dir := drawDirection()
-		g.row, g.col = makeMove(g.row, g.col, dir)
+		g.position.row, g.position.col = makeMove(g.position.row, g.position.col, dir)
 	}
+}
+
+var ghostsStatusMx sync.RWMutex
+
+func updateGhosts(ghosts []*ghost, ghostStatus GhostStatus) {
+	ghostsStatusMx.Lock()
+	defer ghostsStatusMx.Unlock()
+	for _, g := range ghosts {
+		g.status = ghostStatus
+	}
+}
+
+var pillTimer *time.Timer
+var pillMx sync.Mutex
+
+func processPill() {
+	pillMx.Lock()
+	updateGhosts(ghosts, GhostStatusBlue)
+	if pillTimer != nil {
+		pillTimer.Stop()
+	}
+	pillTimer = time.NewTimer(time.Second * time.Duration(cfg.PillDurationSecs))
+	pillMx.Unlock()
+	<-pillTimer.C
+	pillMx.Lock()
+	pillTimer.Stop()
+	updateGhosts(ghosts, GhostStatusNormal)
+	pillMx.Unlock()
 }
 
 func initialise() {
@@ -317,14 +369,22 @@ func main() {
 
 		// process collisions
 		for _, g := range ghosts {
-			if player.row == g.row && player.col == g.col {
-				lives = lives - 1
-				if lives != 0 {
-					moveCursor(player.row, player.col)
-					fmt.Print(cfg.Death)
-					moveCursor(len(maze)+2, 0)
-					time.Sleep(1000 * time.Millisecond)
-					player.row, player.col = player.startRow, player.startCol
+			if player.row == g.position.row && player.col == g.position.col {
+				ghostsStatusMx.RLock()
+				if g.status == GhostStatusNormal {
+					lives = lives - 1
+					if lives != 0 {
+						moveCursor(player.row, player.col)
+						fmt.Print(cfg.Death)
+						moveCursor(len(maze)+2, 0)
+						ghostsStatusMx.RUnlock()
+						time.Sleep(1000 * time.Millisecond)
+						player.row, player.col = player.startRow, player.startCol
+					}
+				} else if g.status == GhostStatusBlue {
+					ghostsStatusMx.RUnlock()
+					updateGhosts([]*ghost{g}, GhostStatusNormal)
+					g.position.row, g.position.col = g.position.startRow, g.position.startCol
 				}
 			}
 		}
